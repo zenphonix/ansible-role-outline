@@ -188,6 +188,39 @@ outline_database_sslmode: prefer
 outline_redis_hostname: ""
 outline_redis_port: 6379
 
+# OAuth2 configuration (with OpenID Connect)
+outline_oidc_client_enabled: false
+
+outline_oidc_client_id: ""
+outline_oidc_client_secret: ""
+outline_oidc_auto_discover_url: ""
+outline_oidc_auth_uri: ""
+outline_oidc_token_uri: ""
+outline_oidc_userinfo_uri: ""
+outline_oidc_username_claim: preferred_username
+outline_oidc_display_name: OpenID Connect
+outline_oidc_scopes: "openid profile email"
+
+## Configuration for the Nextcloud OIDC Provider
+# The name of the client
+outline_oidc_client_name: "{{ outline_identifier }}"
+# An array of redirect uris
+outline_oidc_redirect_uris: "https://{{ outline_hostname }}/auth/oidc.callback"
+# The signing algorithm to use. Can be ´RS256´ or ´HS256´.
+outline_oidc_algorithm: "RS256"
+# The flow type to use for authentication. Can be ´code´ or ´code id_token´.
+outline_oidc_flow: "code"
+# The type of the client. Can be ´public´ or ´confidential´. 
+outline_oidc_type: "confidential"
+# The type of the access token created for the client.
+# If set to ´jwt´ a RFC9068 conforming access token is generated.
+outline_oidc_token_type: "opaque"
+# The regular expression to select the used email from all email addresses of a user (primary and secondary).
+# If not set always the primary email address will be used.
+outline_oidc_email_regex: ""
+# The resource URL for this client (RFC 9728). Must be a valid URL with max length 512 characters.
+outline_oidc_resource_url: null
+
 # Specify the timezone
 outline_environment_variables_tz: UTC
 
@@ -238,15 +271,6 @@ outline_environment_variable_google_client_secret: ""
 outline_environment_variable_azure_client_id: ""
 outline_environment_variable_azure_client_secret: ""
 outline_environment_variable_azure_resource_app_id: ""
-
-outline_environment_variable_oidc_client_id: ""
-outline_environment_variable_oidc_client_secret: ""
-outline_environment_variable_oidc_auth_uri: ""
-outline_environment_variable_oidc_token_uri: ""
-outline_environment_variable_oidc_userinfo_uri: ""
-outline_environment_variable_oidc_username_claim: preferred_username
-outline_environment_variable_oidc_display_name: OpenID Connect
-outline_environment_variable_oidc_scopes: "openid profile email"
 
 outline_environment_variable_cdn_url: ""
 
