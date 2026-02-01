@@ -193,7 +193,7 @@ outline_oidc_client_enabled: false
 
 outline_oidc_client_id: ""
 outline_oidc_client_secret: ""
-outline_oidc_auto_discover_url: ""
+outline_oidc_issuer_url: ""
 outline_oidc_auth_uri: ""
 outline_oidc_token_uri: ""
 outline_oidc_userinfo_uri: ""
