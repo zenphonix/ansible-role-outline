@@ -17,7 +17,7 @@ outline_base_path: "/{{ outline_identifier }}"
 outline_data_path: "{{ outline_base_path }}/data"
 
 # renovate: datasource=docker depName=outlinewiki/outline versioning=semver
-outline_version: 1.4.0
+outline_version: 1.5.0
 
 outline_uid: ""
 outline_gid: ""
@@ -50,6 +50,9 @@ outline_container_image_self_build_src_files_path: "{{ outline_base_path }}/dock
 
 # The base container network. It will be auto-created by this role if it doesn't exist already.
 outline_container_network: "{{ outline_identifier }}"
+
+# Control if the container network is deleted on uninstalling.
+outline_container_network_deletion_enabled: true
 
 # Specify how the container publishes its HTTP port (as defined by `outline_container_http_port`).
 #
