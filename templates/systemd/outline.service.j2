@@ -1,5 +1,6 @@
 {#
 SPDX-FileCopyrightText: 2023 Slavi Pantaleev
+SPDX-FileCopyrightText: 2026 Suguru Hirahara
 
 SPDX-License-Identifier: AGPL-3.0-or-later
 #}
@@ -18,8 +19,7 @@ DefaultDependencies=no
 [Service]
 Type=simple
 Environment="HOME={{ devture_systemd_docker_base_systemd_unit_home_path }}"
-ExecStartPre=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} stop -t {{ devture_systemd_docker_base_container_stop_grace_time_seconds }} {{ outline_identifier }} 2>/dev/null || true'
-ExecStartPre=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} rm {{ outline_identifier }} 2>/dev/null || true'
+ExecStartPre={{ devture_systemd_docker_base_host_command_sh }} -c '{{ outline_container_cleanup_command | trim | replace("\n", " ") }}'
 
 ExecStartPre={{ devture_systemd_docker_base_host_command_docker }} create \
       --rm \
@@ -34,10 +34,19 @@ ExecStartPre={{ devture_systemd_docker_base_host_command_docker }} create \
       --env-file={{ outline_base_path }}/env \
       --label-file={{ outline_base_path }}/labels \
       --mount type=bind,src={{ outline_data_path }},dst=/var/lib/outline/data \
+      {% if outline_database_socket_enabled and outline_database_socket_path_host != '' %}
+      --mount type=bind,src={{ outline_database_socket_path_host }},dst={{ outline_database_socket_path_container }} \
+      {% endif %}
+      {% if outline_redis_socket_enabled and outline_redis_socket_path_host != '' %}
+      --mount type=bind,src={{ outline_redis_socket_path_host }},dst={{ outline_redis_socket_path_container }} \
+      {% endif %}
       {% for arg in outline_container_extra_arguments %}
       {{ arg }} \
       {% endfor %}
-      {{ outline_container_image_self_build_name if outline_container_image_self_build else outline_container_image }}
+      {{ outline_container_image_self_build_name if outline_container_image_self_build else outline_container_image }} \
+      {% for arg in outline_process_extra_arguments %}
+      {{ arg }} \
+      {% endfor %}
 
 {% for network in outline_container_additional_networks %}
 ExecStartPre={{ devture_systemd_docker_base_host_command_docker }} network connect {{ network }} {{ outline_identifier }}
@@ -45,7 +54,7 @@ ExecStartPre={{ devture_systemd_docker_base_host_command_docker }} network conne
 
 ExecStart={{ devture_systemd_docker_base_host_command_docker }} start --attach {{ outline_identifier }}
 
-ExecStop=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} stop -t {{ devture_systemd_docker_base_container_stop_grace_time_seconds }} {{ outline_identifier }} 2>/dev/null || true'
+ExecStop=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} stop -t {{ outline_container_stop_grace_time_seconds }} {{ outline_identifier }} 2>/dev/null || true'
 ExecStop=-{{ devture_systemd_docker_base_host_command_sh }} -c '{{ devture_systemd_docker_base_host_command_docker }} rm {{ outline_identifier }} 2>/dev/null || true'
 
 Restart=always

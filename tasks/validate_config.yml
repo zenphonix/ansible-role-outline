@@ -1,4 +1,5 @@
-# SPDX-FileCopyrightText: 2023 - 2024 Slavi Pantaleev
+# SPDX-FileCopyrightText: 2023, 2024 Slavi Pantaleev
+# SPDX-FileCopyrightText: 2026 Suguru Hirahara
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
@@ -11,23 +12,34 @@
   when: "lookup('ansible.builtin.varnames', ('^' + item.old + '$'), wantlist=True) | length > 0"
   with_items:
     - { "old": "outline_environment_variable_port", "new": "outline_container_http_port" }
+    - { "old": "outline_environment_variable_aws_s3_upload_max_size", "new": "<removed>" }
+    - { "old": "outline_environment_variable_google_analytics_id", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_host", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_port", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_reply_email", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_tls_ciphers", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_secure", "new": "<removed>" }
+    - { "old": "outline_environment_variable_smtp_name", "new": "<removed>" }
     - { "old": "outline_container_labels_traefik_forwardAuth_address_rd", "new": "outline_container_labels_traefik_forwardauth_address_rd" }
     - { "old": "outline_http_header_content_permission_policy", "new": "outline_http_header_permissions_policy" }
+    - { "old": "outline_container_image_force_pull", "new": "<removed> (the new community.docker.docker_image_pull module handles this natively)" }
 
 - name: Fail if required Outline settings not defined
   ansible.builtin.fail:
     msg: >-
-      You need to define a required configuration setting (`{{ item }}`).
-  when: "lookup('vars', item, default='') | string | length == 0"
+      You need to define a required configuration setting (`{{ item.name }}`).
+  when: "item.when | bool and lookup('vars', item.name, default='') | string | length == 0"
   with_items:
-    - outline_identifier
-    - outline_uid
-    - outline_gid
-    - outline_hostname
-    - outline_path_prefix
-    - outline_container_network
-    - outline_environment_variable_secret_key
-    - outline_environment_variable_utils_secret
+    - { "name": "outline_uid", when: true }
+    - { "name": "outline_gid", when: true }
+    - { "name": "outline_hostname", when: true }
+    - { "name": "outline_path_prefix", when: true }
+    - { "name": "outline_container_network", when: true }
+    - { "name": "outline_database_socket_path_host", when: "{{ outline_database_socket_enabled }}" }
+    - { "name": "outline_database_hostname", when: "{{ not outline_database_socket_enabled }}" }
+    - { "name": "outline_database_password", when: true }
+    - { "name": "outline_environment_variable_secret_key", when: true }
+    - { "name": "outline_environment_variable_utils_secret", when: true }
 
 # We need this validation check, because we initially only supported S3 storage and `outline_environment_variable_file_storage` did not exist.
 # However, we'd like to (and do) default `outline_environment_variable_file_storage` to `local` now.
@@ -50,10 +62,15 @@
     - outline_environment_variable_aws_region
     - outline_environment_variable_aws_s3_upload_bucket_name
 
-- name: Fail if encryption key is too short
+# Outline does not merely want 64 characters here, it wants 64 hexadecimal
+# ones: given anything else it prints `SECRET_KEY must be a hexadecimal
+# number` and exits before serving anything.
+- name: Fail if Outline encryption key is not 64 hexadecimal characters
   ansible.builtin.fail:
-    msg: "outline_environment_variable_secret_key needs to be 64 chars long (ideally generated via `openssl rand -hex 32`)"
-  when: outline_environment_variable_secret_key | length != 64
+    msg: >-
+      outline_environment_variable_secret_key needs to be 64 hexadecimal characters.
+      The value can be generated with `openssl rand -hex 32` or in another way.
+  when: outline_environment_variable_secret_key is not match('^[0-9a-fA-F]{64}$')
 
 - name: Fail if Outline logging level is invalid
   ansible.builtin.fail:
@@ -61,17 +78,51 @@
       outline_environment_variable_log_level must be 'error', 'warn', 'info', 'http', 'verbose', 'debug', or 'silly'
   when: "outline_environment_variable_log_level not in ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly']"
 
+- name: Run if Outline + Redis integration is enabled
+  when: outline_redis_is_configured | bool
+  block:
+    - name: Fail if both Redis hostname and socket host path for Outline are set
+      ansible.builtin.fail:
+        msg: >-
+          You may need to define either `outline_redis_hostname` or `outline_redis_socket_path_host` to enable Redis integration.
+      when: >-
+        outline_redis_hostname | string | length != 0 and
+        outline_redis_socket_path_host | string | length != 0
+
+    - name: Fail if Redis hostname for Outline is set when Unix socket is enabled
+      ansible.builtin.fail:
+        msg: >-
+          You need to define `outline_redis_socket_path_host` and remove `outline_redis_hostname` to enable Redis integration,
+          when `outline_redis_socket_enabled` is `true`.
+          Check the documentation for details.
+          You may remove the Redis service from `outline_container_additional_networks_custom` if specified.
+      when: >-
+        outline_redis_hostname | string | length != 0 and
+        outline_redis_socket_enabled
+
+    - name: Fail if Redis socket host path for Outline is set when Unix socket is not enabled
+      ansible.builtin.fail:
+        msg: >-
+          You need to define `outline_redis_hostname` and remove `outline_redis_socket_path_host` to enable Redis integration,
+          when `outline_redis_socket_enabled` is `false`.
+          Check the documentation for details.
+          You may also need to specify the Redis service to `outline_container_additional_networks_custom` if it does not exist on the same network.
+      when: >-
+        outline_redis_socket_path_host | string | length != 0 and
+        not outline_redis_socket_enabled
+
 - name: Run if Traefik is enabled
   when: outline_container_labels_traefik_enabled | bool
   block:
     - name: Fail if Traefik settings required for Outline are not defined
       ansible.builtin.fail:
         msg: >-
-          You need to define a required configuration setting (`{{ item }}`).
-      when: "lookup('vars', item, default='') | string | length == 0"
+          You need to define a required configuration setting (`{{ item.name }}`).
+      when: "item.when | bool and lookup('vars', item.name, default='') | string | length == 0"
       with_items:
-        - outline_container_labels_traefik_hostname
-        - outline_container_labels_traefik_path_prefix
+        - { "name": "outline_container_labels_traefik_hostname", when: true }
+        - { "name": "outline_container_labels_traefik_path_prefix", when: true }
+        - { "name": "outline_container_labels_traefik_middleware_basic_auth_users", when: "{{ outline_container_labels_traefik_middleware_basic_auth_enabled }}" }
 
     # We ensure it doesn't end with a slash, because we handle both (slash and no-slash).
     # Knowing that `outline_container_labels_traefik_path_prefix` does not end with a slash

@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: 2023 - 2024 Nikita Chernyi
-# SPDX-FileCopyrightText: 2023 - 2025 Slavi Pantaleev
+# SPDX-FileCopyrightText: 2023, 2024 Nikita Chernyi
+# SPDX-FileCopyrightText: 2023-2025 Slavi Pantaleev
+# SPDX-FileCopyrightText: 2024 Julian-Samuel Gebühr
 # SPDX-FileCopyrightText: 2024 Sergio Durigan Junior
 # SPDX-FileCopyrightText: 2025 MASH project contributors
-# SPDX-FileCopyrightText: 2025 Suguru Hirahara
+# SPDX-FileCopyrightText: 2025, 2026 Suguru Hirahara
 # SPDX-FileCopyrightText: 2026 Timofej Luitle
 #
 # SPDX-License-Identifier: AGPL-3.0-or-later
@@ -17,7 +18,7 @@ outline_base_path: "/{{ outline_identifier }}"
 outline_data_path: "{{ outline_base_path }}/data"
 
 # renovate: datasource=docker depName=outlinewiki/outline versioning=semver
-outline_version: 1.5.0
+outline_version: 1.11.0
 
 outline_uid: ""
 outline_gid: ""
@@ -40,7 +41,6 @@ outline_container_image_tag: "{{ outline_version }}"
 outline_container_image_registry_prefix: "{{ outline_container_image_registry_prefix_upstream }}"
 outline_container_image_registry_prefix_upstream: "{{ outline_container_image_registry_prefix_upstream_default }}"
 outline_container_image_registry_prefix_upstream_default: docker.io/
-outline_container_image_force_pull: "{{ outline_container_image.endswith(':latest') }}"
 
 outline_container_image_self_build: false
 outline_container_image_self_build_name: "outline/outline:{{ outline_container_image_self_build_repo_version }}"
@@ -83,6 +83,9 @@ outline_container_labels_traefik_priority: 0
 outline_container_labels_traefik_entrypoints: web-secure
 outline_container_labels_traefik_tls: "{{ outline_container_labels_traefik_entrypoints != 'web' }}"
 outline_container_labels_traefik_tls_certResolver: default  # noqa var-naming
+outline_container_labels_traefik_middleware_basic_auth_enabled: false
+# See: https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/basicauth/
+outline_container_labels_traefik_middleware_basic_auth_users: ""
 
 outline_container_labels_traefik_forwardauth_address_rd: "{{ outline_scheme }}://{{ outline_hostname }}{{ outline_path_prefix }}"
 
@@ -122,6 +125,12 @@ outline_container_labels_additional_labels_custom: []
 outline_container_extra_arguments: "{{ outline_container_extra_arguments_auto + outline_container_extra_arguments_custom }}"
 outline_container_extra_arguments_auto: []
 outline_container_extra_arguments_custom: []
+
+# A list of extra arguments to pass to the process inside the container
+# Example: ['--SOME_ARGUMENT']
+outline_process_extra_arguments: "{{ outline_process_extra_arguments_auto + outline_process_extra_arguments_custom }}"
+outline_process_extra_arguments_auto: []
+outline_process_extra_arguments_custom: []
 
 # Specifies the value of the `X-XSS-Protection` header
 # Stops pages from loading when they detect reflected cross-site scripting (XSS) attacks.
@@ -182,15 +191,116 @@ outline_systemd_wanted_services_list_default: []
 outline_systemd_wanted_services_list_auto: []
 outline_systemd_wanted_services_list_custom: []
 
+# Controls how long to wait for the container to stop gracefully before killing it.
+# Because `devture_systemd_docker_base_container_stop_grace_time_seconds` may be quite short, we default to at least 30 seconds.
+# Outline runs its database migrations on startup. Killing it in the middle of them leaves their lock behind in Redis,
+# and Outline then refuses to start until that lock expires.
+outline_container_stop_grace_time_seconds: "{{ [devture_systemd_docker_base_container_stop_grace_time_seconds, 30] | max }}"
+
+# Controls how long the pre-start cleanup should wait for stale container-name release
+# before failing startup explicitly.
+outline_container_cleanup_timeout_seconds: "{{ devture_systemd_docker_base_container_cleanup_timeout_seconds }}"
+
+# Controls the delay between pre-start cleanup retries.
+outline_container_cleanup_retry_delay_seconds: "{{ devture_systemd_docker_base_container_cleanup_retry_delay_seconds }}"
+
+# Shell command used in the systemd pre-start phase to deterministically remove a stale
+# container and wait until Docker releases its name.
+outline_container_cleanup_command: |
+  i=0;
+  while [ "$i" -lt {{ outline_container_cleanup_timeout_seconds }} ]; do
+  {{ devture_systemd_docker_base_host_command_docker }} stop -t {{ outline_container_stop_grace_time_seconds }} {{ outline_identifier }} >/dev/null 2>&1 || true;
+  {{ devture_systemd_docker_base_host_command_docker }} rm -f {{ outline_identifier }} >/dev/null 2>&1 || true;
+  if {{ devture_systemd_docker_base_host_command_docker }} container inspect {{ outline_identifier }} >/dev/null 2>&1; then
+  i=$((i + 1));
+  sleep {{ outline_container_cleanup_retry_delay_seconds }};
+  continue;
+  fi;
+  if {{ devture_systemd_docker_base_host_command_docker }} info >/dev/null 2>&1; then
+  exit 0;
+  fi;
+  echo "Failed to query Docker daemon while cleaning up {{ outline_identifier }}" >&2;
+  exit 1;
+  done;
+  echo "Failed to remove stale container {{ outline_identifier }} after {{ outline_container_cleanup_timeout_seconds }} attempts" >&2;
+  exit 1
+
+########################################################################
+#                                                                      #
+# database                                                             #
+#                                                                      #
+########################################################################
+
+# Specify database configuration
 outline_database_hostname: ""
 outline_database_port: 5432
-outline_database_name: outline
 outline_database_username: outline
 outline_database_password: ""
-outline_database_sslmode: prefer
+# Specify SSL mode for Postgres database server
+# By default, we expect a local container (without SSL), so attempting SSL connections is not necessary.
+# Valid values: see https://www.postgresql.org/docs/11/libpq-ssl.html#LIBPQ-SSL-SSLMODE-STATEMENTS
+outline_database_sslmode: disable
+outline_database_name: outline
 
+# Control if the connection to Postgres is made via a Unix socket
+outline_database_socket_enabled: true
+
+# Specify the path to the Postgres Unix socket path on the host (bind-mount source)
+outline_database_socket_path_host: ""
+
+# Specify the path to the Postgres Unix socket path inside the Outline container
+outline_database_socket_path_container: /run-postgres
+
+outline_environment_variable_database_url: |-
+  postgres://{{ outline_database_username }}:{{ outline_database_password }}@
+  {%- if outline_database_socket_enabled -%}
+  localhost/{{ outline_database_name }}?host={{ outline_database_socket_path_container }}
+  {%- else -%}
+  {{ outline_database_hostname }}:{{ outline_database_port }}/{{ outline_database_name }}?sslmode={{ outline_database_sslmode }}
+  {%- endif -%}
+
+########################################################################
+#                                                                      #
+# /database                                                            #
+#                                                                      #
+########################################################################
+
+########################################################################
+#                                                                      #
+# redis                                                                #
+#                                                                      #
+########################################################################
+
+# Specify Redis configuration
 outline_redis_hostname: ""
 outline_redis_port: 6379
+outline_redis_password: ""
+outline_redis_database: 0
+
+outline_redis_is_configured: "{{ outline_redis_hostname != '' or outline_redis_socket_path_host != '' }}"
+
+# Control if the connection to Redis is made via a Unix socket
+outline_redis_socket_enabled: true
+
+# Specify the path to the Redis Unix socket path inside the Outline container
+outline_redis_socket_path_container: /run-valkey
+outline_redis_socket_path: /valkey.sock
+
+# Specify the path to the Redis Unix socket path on the host (bind-mount source)
+outline_redis_socket_path_host: ""
+
+outline_environment_variable_redis_url: |-
+  {% if outline_redis_socket_enabled %}
+  unix://{{ outline_redis_socket_path_container }}{{ outline_redis_socket_path }}?db={{ outline_redis_database }}{{ '&password=' + outline_redis_password if outline_redis_password }}
+  {% else %}
+  redis://:{{ outline_redis_password }}@{{ outline_redis_hostname }}:{{ outline_redis_port }}/{{ outline_redis_database }}
+  {%- endif -%}
+
+########################################################################
+#                                                                      #
+# /redis                                                               #
+#                                                                      #
+########################################################################
 
 # OAuth2 configuration (with OpenID Connect)
 outline_oidc_client_enabled: false
@@ -216,10 +326,7 @@ outline_environment_variable_secret_key: ""
 # This may be be generated with `openssl rand -hex 32`, but it may also have another format.
 outline_environment_variable_utils_secret: ""
 
-outline_environment_variable_database_url: "postgres://{{ outline_database_username }}:{{ outline_database_password }}@{{ outline_database_hostname }}:{{ outline_database_port }}/{{ outline_database_name }}"
 outline_environment_variable_pgsslmode: "{{ outline_database_sslmode }}"
-
-outline_environment_variable_redis_url: "redis://{{ outline_redis_hostname }}:{{ outline_redis_port }}"
 
 outline_environment_variable_url: "{{ outline_scheme }}://{{ outline_hostname }}"
 
@@ -235,7 +342,6 @@ outline_environment_variable_aws_region: ""
 outline_environment_variable_aws_s3_accelerate_url: ""
 outline_environment_variable_aws_s3_upload_bucket_url: ""
 outline_environment_variable_aws_s3_upload_bucket_name: ""
-outline_environment_variable_aws_s3_upload_max_size: 26214400
 outline_environment_variable_aws_s3_force_path_style: true
 outline_environment_variable_aws_s3_acl: private
 
@@ -272,21 +378,13 @@ outline_environment_variable_debug: ""
 # Valid values: error, warn, info, http, verbose, debug and silly
 outline_environment_variable_log_level: info
 
-outline_environment_variable_google_analytics_id: ""
-
 outline_environment_variable_sentry_dsn: ""
 outline_environment_variable_sentry_tunnel: ""
 
 # See: https://docs.getoutline.com/s/hosting/doc/smtp-cqCJyZGMIB
-outline_environment_variable_smtp_host: ""
-outline_environment_variable_smtp_port: ""
 outline_environment_variable_smtp_username: ""
 outline_environment_variable_smtp_password: ""
 outline_environment_variable_smtp_from_email: ""
-outline_environment_variable_smtp_reply_email: ""
-outline_environment_variable_smtp_tls_ciphers: ""
-outline_environment_variable_smtp_secure: true
-outline_environment_variable_smtp_name: "{{ outline_hostname }}"
 
 outline_environment_variable_default_language: en_US
 
@@ -297,3 +395,13 @@ outline_environment_variable_rate_limiter_duration_window: 60
 # Additional environment variables.
 # See: https://raw.githubusercontent.com/outline/outline/main/.env.sample
 outline_environment_variables_additional_variables: ""
+
+# outline_restart_necessary controls whether the Outline systemd
+# service will be restarted (when true) or merely started (when false) by the
+# systemd service manager role (when conditional restart is enabled).
+#
+# This value is automatically computed during installation based on whether
+# any configuration files, the systemd service file, or the container image changed.
+# The default of `false` means "no restart needed" — appropriate when the role's
+# installation tasks haven't run (e.g., due to --tags skipping them).
+outline_restart_necessary: false

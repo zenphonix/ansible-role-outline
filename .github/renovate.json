@@ -1,38 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Patch releases are deliberately not automerged here, unlike in most other roles in this fleet.",
+    "Outline applies its database migrations automatically at container start, forward-only, and its patch releases do ship them: 1.8.0 -> 1.8.1 added increase-url-column-lengths, and 1.9.1 -> 1.9.2 added add-mcp-to-search-queries-source.",
+    "An automerged patch would therefore rewrite the schema of the database holding the users' documents, unattended and with no way back short of restoring a backup."
+  ],
   "extends": [
-    "config:recommended",
-    ":semanticCommitsDisabled"
-  ],
-  "labels": [
-    "dependencies"
-  ],
-  "packageRules": [
-    {
-      "matchFileNames": [
-        ".pre-commit-config.yaml",
-        ".github/workflows/autotag.yml",
-        ".github/workflows/pre-commit.yml"
-      ],
-      "enabled": true,
-      "automerge": true,
-      "automergeType": "branch",
-      "schedule": ["* * 1 */6 *"],
-      "automergeSchedule": ["* * 1-3 */6 *"]
-    }
-  ],
-  "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
-        "/defaults/main.yml$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>[a-z-.]+?) depName=(?<depName>[^\\s]+?)(?: (?:lookupName|packageName)=(?<packageName>[^\\s]+?))?(?: versioning=(?<versioning>[a-z-0-9]+?))?\\s+[A-Za-z0-9_]+?(?:_version|_tag)\\s*:\\s*[\"']?(?<currentValue>.+?)[\"']?\\s"
-      ]
-    }
-  ],
-  "pre-commit": {
-    "enabled": true
-  }
+    "github>mother-of-all-self-hosting/renovate-config#v1.1.0"
+  ]
 }
